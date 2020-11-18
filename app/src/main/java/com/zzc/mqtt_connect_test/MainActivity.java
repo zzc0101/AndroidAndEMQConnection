@@ -36,7 +36,12 @@ import android.widget.TextView;
 import android.widget.Toast;
 import android.widget.VideoView;
 
+import com.squareup.picasso.Callback;
+import com.squareup.picasso.Picasso;
+import com.squareup.picasso.RequestCreator;
+
 import org.eclipse.paho.client.mqttv3.IMqttDeliveryToken;
+import org.eclipse.paho.client.mqttv3.IMqttMessageListener;
 import org.eclipse.paho.client.mqttv3.MqttCallback;
 import org.eclipse.paho.client.mqttv3.MqttClient;
 import org.eclipse.paho.client.mqttv3.MqttConnectOptions;
@@ -64,7 +69,7 @@ import java.util.TimerTask;
 import static android.media.MediaPlayer.SEEK_CLOSEST_SYNC;
 
 public class MainActivity extends AppCompatActivity {
-    public static final String IP_ADDRESS = "ws://192.168.137.1:8083";
+    public static final String IP_ADDRESS = "ws://10.0.2.2:8083";
     public static final String clientId = "android_connection";
 
     public static Button btn_open,btn_close,btn_sub,btn_pub;
@@ -78,7 +83,6 @@ public class MainActivity extends AppCompatActivity {
 
     static TextView message_textView;
     Handler handler = null;
-
     int count = 0;
 
 //    SurfaceView surface_view;
@@ -88,7 +92,7 @@ public class MainActivity extends AppCompatActivity {
     int index = 0;
     int end = 0;
 
-    ImageView image;
+    static ImageView image;
 
     File fileVedio=new File(Environment.getExternalStorageDirectory(),"9999.mp4");
     ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
@@ -271,6 +275,16 @@ public class MainActivity extends AppCompatActivity {
                     spinner_pub.setEnabled(false);
                     message_textView.setText("");
                     break;
+
+                case 0x4:
+                    Bitmap bitmap = null;
+                    try {
+                        bitmap = BitmapFactory.decodeStream(new FileInputStream(msg.obj.toString()));
+                        image.setImageBitmap(bitmap);
+                    } catch (FileNotFoundException e) {
+                        e.printStackTrace();
+                    }
+                    break;
             }
         }
     }
@@ -289,18 +303,15 @@ public class MainActivity extends AppCompatActivity {
         @Override
         public void connectionLost(Throwable throwable) {
             Log.i("zzc","连接断开，可以做重连");
-            try {
-                mqttClient.reconnect();
-            } catch (MqttException e) {
-                e.printStackTrace();
-            }
         }
 
         @Override
-        public synchronized void messageArrived(String topic, final MqttMessage message) throws Exception {
+        public void messageArrived(String topic, final MqttMessage message) throws Exception {
             if(topic.equals("testtopic/2")) {
                 String path = System.currentTimeMillis()+".jpg";
-                ThreadOutFile(message.getPayload(),path);
+                File file = new File(Environment.getExternalStorageDirectory(),path);
+                ThreadOutFile(message.getPayload(),file.getPath());
+                message.clearPayload();
             }
         }
 
@@ -319,8 +330,10 @@ public class MainActivity extends AppCompatActivity {
                     runOnUiThread(new Runnable() {
                         @Override
                         public void run() {
+//                            Picasso.get().load("file://"+path).into(image);
+                            Bitmap bitmap = null;
                             try {
-                                Bitmap bitmap = BitmapFactory.decodeStream(openFileInput(path));
+                                bitmap = BitmapFactory.decodeStream(new FileInputStream(path));
                                 image.setImageBitmap(bitmap);
                             } catch (FileNotFoundException e) {
                                 e.printStackTrace();
@@ -338,10 +351,14 @@ public class MainActivity extends AppCompatActivity {
             public void run() {
                 synchronized (this) {
                     try {
-                        FileOutputStream fileOutputStream = openFileOutput(path,MODE_PRIVATE);
-                        fileOutputStream.write(bytes);
-                        fileOutputStream.flush();
-                        ThreadShow(path);
+                        BufferedOutputStream bufferedOutputStream = new BufferedOutputStream(new FileOutputStream(path));
+                        bufferedOutputStream.write(bytes);
+                        bufferedOutputStream.flush();
+                        bufferedOutputStream.close();
+                        Log.i("zzc",count+"");
+                        count++;
+                        sendMessage(path,0x4);
+//                        ThreadShow(path);
                     } catch (FileNotFoundException e) {
                         e.printStackTrace();
                     } catch (IOException e) {
