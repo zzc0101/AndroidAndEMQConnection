@@ -1,75 +1,43 @@
 package com.zzc.mqtt_connect_test;
 
 import androidx.annotation.NonNull;
-import androidx.annotation.RequiresApi;
+import androidx.annotation.StyleableRes;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
 import android.Manifest;
 import android.annotation.SuppressLint;
-import android.content.Context;
 import android.content.pm.PackageManager;
-import android.content.res.AssetFileDescriptor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
-import android.graphics.drawable.BitmapDrawable;
-import android.media.AudioManager;
-import android.media.MediaPlayer;
-import android.net.Uri;
-import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.os.Handler;
 import android.os.Message;
 import android.util.Log;
-import android.view.SurfaceHolder;
-import android.view.SurfaceView;
+import android.util.LruCache;
 import android.view.View;
-import android.widget.AdapterView;
-import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
-import android.widget.VideoView;
 
-import com.squareup.picasso.Callback;
-import com.squareup.picasso.Picasso;
-import com.squareup.picasso.RequestCreator;
-
-import org.eclipse.paho.client.mqttv3.IMqttDeliveryToken;
-import org.eclipse.paho.client.mqttv3.IMqttMessageListener;
-import org.eclipse.paho.client.mqttv3.MqttCallback;
+import com.bumptech.glide.Glide;
 import org.eclipse.paho.client.mqttv3.MqttClient;
 import org.eclipse.paho.client.mqttv3.MqttConnectOptions;
 import org.eclipse.paho.client.mqttv3.MqttException;
 import org.eclipse.paho.client.mqttv3.MqttMessage;
 import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence;
 
-import java.io.BufferedOutputStream;
-import java.io.ByteArrayOutputStream;
-import java.io.File;
-import java.io.FileDescriptor;
-import java.io.FileInputStream;
-import java.io.FileNotFoundException;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.sql.Time;
-import java.util.ArrayList;
-import java.util.Arrays;
+import java.lang.ref.WeakReference;
+import java.util.LinkedList;
 import java.util.List;
-import java.util.Timer;
-import java.util.TimerTask;
-
-import static android.media.MediaPlayer.SEEK_CLOSEST_SYNC;
 
 public class MainActivity extends AppCompatActivity {
-    public static final String IP_ADDRESS = "ws://10.0.2.2:8083";
+    public static final String IP_ADDRESS = "tcp://192.168.137.1:1883";
     public static final String clientId = "android_connection";
 
     public static Button btn_open,btn_close,btn_sub,btn_pub;
@@ -78,24 +46,17 @@ public class MainActivity extends AppCompatActivity {
     public static MqttClient mqttClient = null;
     String content = "{\"msg\":\"第一个测试程序开始划水水！！！\"}";
 
-    boolean flag = false;
-    boolean flagPlay = false;
+    static LinkedList<String> linkedList = new LinkedList<String>();
 
-    static TextView message_textView;
-    Handler handler = null;
-    int count = 0;
+    static String filePath = Environment.getExternalStorageDirectory().getPath()+"/Download/";
 
-//    SurfaceView surface_view;
-    VideoView surface_view;
-    static MediaPlayer mediaPlayer = new MediaPlayer();
+    TextView message_textView;
+    static Handler handler = null;
 
-    int index = 0;
-    int end = 0;
+    ImageView image;
 
-    static ImageView image;
+    static MyImageLoader mImageLoader;
 
-    File fileVedio=new File(Environment.getExternalStorageDirectory(),"9999.mp4");
-    ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -111,6 +72,7 @@ public class MainActivity extends AppCompatActivity {
                     1000);
         }
 
+        mImageLoader = new MyImageLoader();
 
     }
 
@@ -213,7 +175,6 @@ public class MainActivity extends AppCompatActivity {
         spinner_sub = findViewById(R.id.spinner_sub);
         spinner_pub = findViewById(R.id.spinner_pub);
         message_textView = findViewById(R.id.message_textView);
-//        surface_view = findViewById(R.id.surface_view);
         image = findViewById(R.id.image);
     }
 
@@ -242,17 +203,19 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // Handler 处理
-    static class myHandler extends Handler {
-        private Context context;
-        public myHandler(Context context) {
-            this.context = context;
+    class myHandler extends Handler {
+        //创建一个类继承 Handler
+        WeakReference<AppCompatActivity> mWeakReference;
+
+        public myHandler(AppCompatActivity activity) {
+            mWeakReference = new WeakReference<>(activity);
         }
 
         @Override
         public void handleMessage(@NonNull Message msg) {
             switch (msg.what) {
                 case 0x0:
-                    Toast.makeText(context.getApplicationContext(),msg.obj.toString(),Toast.LENGTH_SHORT).show();
+                    Toast.makeText(getApplicationContext(),msg.obj.toString(),Toast.LENGTH_SHORT).show();
                     break;
                 case 0x1:
                     btn_close.setEnabled(true);
@@ -277,12 +240,15 @@ public class MainActivity extends AppCompatActivity {
                     break;
 
                 case 0x4:
-                    Bitmap bitmap = null;
-                    try {
-                        bitmap = BitmapFactory.decodeStream(new FileInputStream(msg.obj.toString()));
-                        image.setImageBitmap(bitmap);
-                    } catch (FileNotFoundException e) {
-                        e.printStackTrace();
+                    Bitmap bitmap;
+                    bitmap = BitmapFactory.decodeFile(msg.obj.toString());
+                    image.setImageBitmap(bitmap);
+                    break;
+
+                case 0x5:
+                    Bitmap bitmap1 = mImageLoader.getBitmap(msg.obj.toString());
+                    if(bitmap1 != null) {
+                        image.setImageBitmap(bitmap1);
                     }
                     break;
             }
@@ -290,132 +256,12 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // 发送信息
-    public void sendMessage(String msg,int what) {
+    public static void sendMessage(String msg, int what) {
         Message message = Message.obtain();
         message.what = what;
         message.obj = msg;
         handler.sendMessage(message);
     }
-
-//     EMQ 回调函数
-    private class OnMessageCallback implements MqttCallback {
-
-        @Override
-        public void connectionLost(Throwable throwable) {
-            Log.i("zzc","连接断开，可以做重连");
-        }
-
-        @Override
-        public void messageArrived(String topic, final MqttMessage message) throws Exception {
-            if(topic.equals("testtopic/2")) {
-                String path = System.currentTimeMillis()+".jpg";
-                File file = new File(Environment.getExternalStorageDirectory(),path);
-                ThreadOutFile(message.getPayload(),file.getPath());
-                message.clearPayload();
-            }
-        }
-
-        @Override
-        public void deliveryComplete(IMqttDeliveryToken token) {
-            Log.i("zzc","deliveryComplete---------" + token.isComplete());
-        }
-
-    }
-
-    public void ThreadShow(final String path) {
-        new Thread(){
-            @Override
-            public void run() {
-                synchronized (this) {
-                    runOnUiThread(new Runnable() {
-                        @Override
-                        public void run() {
-//                            Picasso.get().load("file://"+path).into(image);
-                            Bitmap bitmap = null;
-                            try {
-                                bitmap = BitmapFactory.decodeStream(new FileInputStream(path));
-                                image.setImageBitmap(bitmap);
-                            } catch (FileNotFoundException e) {
-                                e.printStackTrace();
-                            }
-                        }
-                    });
-                }
-            }
-        }.start();
-    }
-
-    public void ThreadOutFile(final byte[] bytes, final String path) {
-        new Thread(){
-            @Override
-            public void run() {
-                synchronized (this) {
-                    try {
-                        BufferedOutputStream bufferedOutputStream = new BufferedOutputStream(new FileOutputStream(path));
-                        bufferedOutputStream.write(bytes);
-                        bufferedOutputStream.flush();
-                        bufferedOutputStream.close();
-                        Log.i("zzc",count+"");
-                        count++;
-                        sendMessage(path,0x4);
-//                        ThreadShow(path);
-                    } catch (FileNotFoundException e) {
-                        e.printStackTrace();
-                    } catch (IOException e) {
-                        e.printStackTrace();
-                    }
-                }
-            }
-        }.start();
-    }
-
-//    public void ThreadOutFile(final byte[] bytes) {
-//        new Thread(){
-//            @Override
-//            public void run() {
-//                synchronized (this) {
-//                    Log.i("hr","写入第 count="+count);
-//                    FileOutputStream outputStream = null;
-//                    try {
-//                        byteArrayOutputStream.write(bytes);
-//                        if(count%5==0 && count != 0) {
-//                            outputStream = new FileOutputStream(fileVedio);
-//                            outputStream.write(byteArrayOutputStream.toByteArray());
-//                            byteArrayOutputStream.close();
-//                            outputStream.flush();
-//                            outputStream.close();
-//                        }
-//                    } catch (FileNotFoundException e) {
-//                        e.printStackTrace();
-//                    } catch (IOException e) {
-//                        e.printStackTrace();
-//                        Log.e("zzc","写入失败！！");
-//                    }
-//                }
-//            }
-//        }.start();
-//    }
-
-//    public void ShowPlay() {
-//        new Thread(){
-//            @Override
-//            public void run() {
-//                    synchronized (this) {
-//                        Log.i("hr","显示第 count="+count);
-//                        count++;
-//                        runOnUiThread(new Runnable() {
-//                            @Override
-//                            public void run() {
-//                                if((count-1)%10 == 0 && (count-1)!=0) {
-//                                    surface_view.setVideoPath(String.valueOf(fileVedio));
-//                                    surface_view.start();
-//                                }
-//                            }
-//                        });
-//                    }
-//                }
-//        }.start();
-//    }
 
     @Override
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
